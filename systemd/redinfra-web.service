@@ -1,0 +1,15 @@
+[Unit]
+Description=RedInfra Web (Flask)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/redinfra-web
+ExecStart=/usr/bin/python3 /opt/redinfra-web/app.py
+Restart=on-failure
+RestartSec=5
+Environment=REDINFRA_PATH=/opt/redinfra
+
+[Install]
+WantedBy=multi-user.target
