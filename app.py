@@ -2002,6 +2002,6 @@ def api_inventory_sendgrid():
 
 
 if __name__ == "__main__":
-    print("🔴 RedInfra Dashboard — http://0.0.0.0:4444")
+    print("🔴 RedInfra Dashboard — http://127.0.0.1:4444")
     print("   Config: %s | Mode: %s" % (CONFIG_PATH, "MOCK" if MOCK_MODE else "LIVE"))
-    app.run(host="0.0.0.0", port=4444, debug=False, threaded=True)
+    app.run(host="127.0.0.1", port=4444, debug=False, threaded=True)
