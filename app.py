@@ -1371,15 +1371,15 @@ def settings():
 # ─── API ──────────────────────────────────────────────────────────────────────
 
 SVC_PLAYBOOKS_MAP = {
-    "web":      [("install_web.yml", lambda a: {"web_domains": a.get("web_domains", [])})],
+    "web":      [("install_web.yml", lambda a: a)],
     "mail":     [
-        ("install_mail.yml",    lambda a: {"domains": a.get("domains", []), "sendgrid_password": a.get("sendgrid_password", "")}),
-        ("install_gophish.yml", lambda a: {"mails": a.get("mails", []), "web_domains": a.get("web_domains", []), "gophish_rid": a.get("gophish_rid", "rid"), "gophish_track_uri": a.get("gophish_track_uri", "/track"), "gophish_uris": a.get("gophish_uris", [])}),
+        ("install_mail.yml",    lambda a: {k: v for k, v in a.items() if k not in ("mails", "web_domains", "gophish_rid", "gophish_track_uri", "gophish_uris")}),
+        ("install_gophish.yml", lambda a: {k: v for k, v in a.items() if k not in ("domains", "sendgrid_password")}),
     ],
-    "mythic":   [("install_mythic.yml", lambda a: {"mythic_password": a.get("mythic_password", ""), "github_extensions": a.get("github_extensions", [])})],
-    "webdav":   [("install_webdav.yml", lambda a: {"web_domains": a.get("web_domains", [])})],
-    "responder":[("install_responder.yml", lambda a: {})],
-    "redelk":   [("install_redelk_c2.yml", lambda a: {}), ("install_redelk_redirectors.yml", lambda a: {})],
+    "mythic":   [("install_mythic.yml", lambda a: a)],
+    "webdav":   [("install_webdav.yml", lambda a: a)],
+    "responder":[("install_responder.yml", lambda a: a)],
+    "redelk":   [("install_redelk_c2.yml", lambda a: a), ("install_redelk_redirectors.yml", lambda a: a)],
     "o365":     None,  # written directly into node config, not ansible
     "custom":   "__custom__",  # handled separately — raw YAML list injected as-is into ansible[]
 }
@@ -1725,11 +1725,19 @@ def api_inventory_aws():
             aws_access_key_id=api.get("aws_key",""),
             aws_secret_access_key=api.get("aws_secret",""),
         )
+        # Build tag filters from settings (main.yml tags)
+        tags_cfg = cfg.get("tags", {})
+        filters = [
+            {"Name": "tag:%s" % k, "Values": [str(v)]}
+            for k, v in tags_cfg.items()
+            if v  # skip empty values
+        ]
+
         instances = []
         for region in AWS_REGIONS:
             try:
                 ec2 = session.client("ec2", region_name=region)
-                resp = ec2.describe_instances()
+                resp = ec2.describe_instances(Filters=filters) if filters else ec2.describe_instances()
                 for r in resp["Reservations"]:
                     for inst in r["Instances"]:
                         name = next((t["Value"] for t in inst.get("Tags",[]) if t["Key"]=="Name"), "")
@@ -2002,6 +2010,6 @@ def api_inventory_sendgrid():
 
 
 if __name__ == "__main__":
-    print("🔴 RedInfra Dashboard — http://127.0.0.1:4444")
+    print("🔴 RedInfra Dashboard — http://0.0.0.0:4444")
     print("   Config: %s | Mode: %s" % (CONFIG_PATH, "MOCK" if MOCK_MODE else "LIVE"))
-    app.run(host="127.0.0.1", port=4444, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=4444, debug=False, threaded=True)
