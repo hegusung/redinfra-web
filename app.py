@@ -225,7 +225,6 @@ NAV_TPL = """<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
 <nav>
   <span class="logo">🔴 REDINFRA</span>
   <a href="/" {a_dash}>Dashboard</a>
-  <a href="/mission/new" {a_mission}>New Mission</a>
   <a href="/deploy" {a_deploy}>Deploy</a>
   <a href="/inventory" {a_inventory}>Inventory</a>
   <a href="/settings" {a_settings}>Settings</a>
