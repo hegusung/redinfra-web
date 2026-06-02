@@ -20,6 +20,8 @@ BASE_PATH = os.environ.get("REDINFRA_PATH", "/opt/redinfra")
 MOCK_MODE = not os.path.exists(BASE_PATH)
 CONFIG_PATH = "/tmp/redinfra-demo/config" if MOCK_MODE else os.path.join(BASE_PATH, "config")
 os.makedirs(CONFIG_PATH, exist_ok=True)
+FILES_DIR = "/tmp/redinfra-demo/files" if MOCK_MODE else os.path.join(BASE_PATH, "files")
+os.makedirs(FILES_DIR, exist_ok=True)
 
 AWS_REGIONS = ["eu-west-1","eu-west-2","eu-west-3","eu-north-1","eu-central-1",
                "us-east-1","us-east-2","us-west-1","us-west-2","ap-southeast-1","ap-northeast-1"]
@@ -50,7 +52,11 @@ def get_missions():
         try:
             with open(f) as fh:
                 cfg = yaml.safe_load(fh) or {}
-            nodes = [k for k in NODE_TYPES if k in cfg]
+            # Detect node keys: top-level dict entries that look like node configs (have region or instance_type)
+            # Also keep NODE_TYPES for backward compat with mock missions
+            nodes = [k for k, v in cfg.items()
+                     if isinstance(v, dict) and ('region' in v or 'instance_type' in v or 'local_ip' in v)
+                     and k not in ('api', 'routing', 'tags')]
             missions.append({
                 "name": cfg.get("mission", os.path.basename(f).replace(".yml","")),
                 "enabled": cfg.get("enabled", False),
@@ -96,11 +102,41 @@ def save_main(data):
 
 # ─── Deploy runner ────────────────────────────────────────────────────────────
 
+RUNS_DIR = "/tmp/redinfra-runs"
+os.makedirs(RUNS_DIR, exist_ok=True)
+
+# Cleanup logs older than 7 days at startup
+_now = time.time()
+for _f in os.listdir(RUNS_DIR):
+    _fp = os.path.join(RUNS_DIR, _f)
+    if os.path.isfile(_fp) and (_now - os.path.getmtime(_fp)) > 7 * 86400:
+        os.remove(_fp)
+
 log_queues = {}
 
-def run_cmd(cmd, qid):
+# Global current run state
+current_run = {"id": None, "log_file": None, "action": None, "status": "idle", "started": None}
+current_run_lock = threading.Lock()
+
+def _run_log_path(run_id, action, started_ts):
+    dt = __import__('datetime').datetime.fromtimestamp(started_ts).strftime('%Y%m%d_%H%M%S')
+    safe_action = action.replace('/', '-').replace(' ', '_')
+    short_id = run_id[:6]
+    return os.path.join(RUNS_DIR, f"{dt}_{safe_action}_{short_id}.log")
+
+def run_cmd(cmd, qid, log_file):
     q = log_queues.get(qid)
     if not q: return
+
+    def emit(line):
+        """Write to queue and append to log file."""
+        q.put(line)
+        try:
+            with open(log_file, 'a', encoding='utf-8') as lf:
+                lf.write(line + '\n')
+        except Exception:
+            pass
+
     if MOCK_MODE:
         steps = [
             "\033[34m[*] MOCK MODE — RedInfra not found at %s\033[0m" % BASE_PATH,
@@ -117,29 +153,33 @@ def run_cmd(cmd, qid):
             "\033[34m[*] Ansible: Running playbooks...\033[0m",
             "\033[32m[+] Ansible: Playbook install_mail.yml OK\033[0m",
             "\033[32m[+] Ansible: Playbook install_gophish.yml OK\033[0m",
-            "\033[32m[✓] All steps complete! (simulation)\033[0m",
+            "\033[32m[\u2713] All steps complete! (simulation)\033[0m",
         ]
         for s in steps:
-            q.put(s); time.sleep(0.6)
-        q.put(None); return
-    try:
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        proc = subprocess.Popen(
-            cmd, cwd=BASE_PATH, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, bufsize=1,
-            env=env
-        )
-        for line in proc.stdout:
-            q.put(line.rstrip())
-        proc.wait()
-        rc = proc.returncode
-        if rc != 0:
-            q.put("\033[31m[!] Process exited with code %d\033[0m" % rc)
-        q.put(None)
-    except Exception as e:
-        q.put("\033[31m[!] Error: %s\033[0m" % str(e))
-        q.put(None)
+            emit(s); time.sleep(0.6)
+    else:
+        try:
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            proc = subprocess.Popen(
+                cmd, cwd=BASE_PATH, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, bufsize=1,
+                env=env
+            )
+            for line in proc.stdout:
+                emit(line.rstrip())
+            proc.wait()
+            rc = proc.returncode
+            if rc != 0:
+                emit("\033[31m[!] Process exited with code %d\033[0m" % rc)
+        except Exception as e:
+            emit("\033[31m[!] Error: %s\033[0m" % str(e))
+
+    # Mark run as done
+    with current_run_lock:
+        current_run["status"] = "done"
+    q.put(None)
+    log_queues.pop(qid, None)
 
 # ─── HTML ────────────────────────────────────────────────────────────────────
 
@@ -195,7 +235,7 @@ input:focus,select:focus,textarea:focus{{border-color:var(--green)}}
 .dt td{{padding:5px 8px;vertical-align:top}}
 .dt td input,.dt td select{{padding:5px 8px;margin:0}}
 /* Terminal */
-.term{{background:#000;border:1px solid var(--border);border-radius:8px;padding:14px;font-family:monospace;font-size:.82em;height:420px;overflow-y:auto;line-height:1.6}}
+.term{{background:#000;border:1px solid var(--border);border-radius:8px;padding:14px;font-family:monospace;font-size:.82em;height:420px;min-height:420px;overflow-y:auto;line-height:1.6;flex:1}}
 .tg{{color:#00ff88}}.tr{{color:#ff4444}}.tb{{color:#4488ff}}.ty{{color:#ffcc00}}.tw{{color:#c8d0dc}}
 /* Mission row */
 .mrow{{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:9px}}
@@ -227,6 +267,7 @@ NAV_TPL = """<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
   <a href="/" {a_dash}>Dashboard</a>
   <a href="/deploy" {a_deploy}>Deploy</a>
   <a href="/inventory" {a_inventory}>Inventory</a>
+  <a href="/files" {a_files}>Files</a>
   <a href="/settings" {a_settings}>Settings</a>
   {mock}
 </nav>
@@ -307,7 +348,7 @@ function line_class(l) {{
 </body></html>"""
 
 def nav(title, page, body):
-    pages = {"dash":"","mission":"","deploy":"","inventory":"","settings":""}
+    pages = {"dash":"","mission":"","deploy":"","inventory":"","files":"","settings":""}
     pages[page] = 'class="active"'
     mock = '<span class="mock">⚠ MOCK MODE</span>' if MOCK_MODE else ''
     return (NAV_TPL
@@ -315,7 +356,7 @@ def nav(title, page, body):
             title=title,
             a_dash=pages["dash"], a_mission=pages["mission"],
             a_deploy=pages["deploy"], a_inventory=pages["inventory"],
-            a_settings=pages["settings"],
+            a_files=pages["files"], a_settings=pages["settings"],
             mock=mock,
         )
         .replace("BODY_PLACEHOLDER", body)
@@ -1158,10 +1199,10 @@ def deploy():
     <div class="card" style="background:rgba(68,136,255,.05);border-color:rgba(68,136,255,.3);font-size:.82em;color:var(--blue);margin-bottom:18px">
       ℹ <b>All enabled missions are deployed together</b> — redinfra reads every enabled mission from <code>config/*.yml</code>. Use the dashboard to enable/disable missions before deploying.
     </div>
-    <div style="display:grid;grid-template-columns:340px 1fr;gap:16px">
+    <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:stretch">
     <div>
       <div class="card">
-        <div class="card-head"><span class="card-title">⚡ Actions</span></div>
+        <div class="card-head"><span class="card-title">🎯 Mission</span></div>
         <div class="fg-group"><label class="fg">SELECT MISSION (enable/disable only)</label>
           <select id="msel">%s</select>
           <div style="margin-top:8px;display:flex;gap:8px">
@@ -1169,7 +1210,9 @@ def deploy():
             <button class="btn btn-s" style="flex:1;justify-content:center" onclick="toggleMission(false)">Disable</button>
           </div>
         </div>
-        <hr>
+      </div>
+      <div class="card">
+        <div class="card-head"><span class="card-title">⚡ Actions</span></div>
         <div style="margin-bottom:10px;font-size:.8em;color:var(--text2)">INDIVIDUAL STEPS</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:14px">
           <button class="btn btn-b" onclick="run('apply-terraform')">🏗 Terraform</button>
@@ -1198,41 +1241,89 @@ def deploy():
         <button class="btn btn-o" onclick="runPlaybook()">▶ Run Playbooks</button>
       </div>
     </div>
-    <div class="card" style="display:flex;flex-direction:column">
-      <div class="card-head">
-        <span class="card-title">🖥 Terminal</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <span id="sbadge" class="badge bb">IDLE</span>
-          <button class="btn btn-s" style="padding:4px 9px;font-size:.75em" onclick="document.getElementById('term').innerHTML='<span class=tw>// Cleared.</span>'">Clear</button>
-        </div>
+    <div style="display:flex;flex-direction:column;gap:0;height:100%%">
+      <div id="reconnect-banner" style="display:none;align-items:center;gap:8px;background:rgba(68,136,255,.1);border:1px solid rgba(68,136,255,.3);border-radius:8px 8px 0 0;padding:8px 14px;font-size:.82em;color:var(--blue)">
+        <span id="rb-label"></span>
+        <button class="btn btn-b" style="padding:3px 10px;font-size:.75em" onclick="reconnect()">&#8635; Replay log</button>
+        <button style="margin-left:auto;background:none;border:none;color:var(--text2);cursor:pointer;font-size:1em" onclick="document.getElementById('reconnect-banner').style.display='none'">×</button>
       </div>
-      <div class="term" id="term"><span class="tw">// Output will appear here...</span></div>
+      <div class="card" style="display:flex;flex-direction:column;border-radius:0 0 8px 8px;margin-top:0;flex:1">
+        <div class="card-head">
+          <span class="card-title">🖥 Terminal</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="sbadge" class="badge bb">IDLE</span>
+            <button class="btn btn-s" style="padding:4px 9px;font-size:.75em" onclick="document.getElementById('term').innerHTML='<span class=tw>// Cleared.</span>'">Clear</button>
+          </div>
+        </div>
+        <div class="term" id="term"><span class="tw">// Output will appear here...</span></div>
+      </div>
     </div>
     </div>
     <script>
     var es = null;
-    function setStatus(t,c){var b=document.getElementById('sbadge');b.textContent=t;b.className='badge b'+c;}
+    var current_run_id = null;
+
+    function setStatus(t,c){
+      var b=document.getElementById('sbadge');
+      b.textContent=t; b.className='badge b'+c;
+    }
     function addLine(text){
       var t=document.getElementById('term');
       var d=document.createElement('div');
       d.className=line_class(text);
       d.textContent=strip_ansi(text);
-      t.appendChild(d);t.scrollTop=t.scrollHeight;
+      t.appendChild(d); t.scrollTop=t.scrollHeight;
     }
-    function startSSE(url){
-      if(es)es.close();
-      document.getElementById('term').innerHTML='';
+    function startSSE(url, clearTerm){
+      if(es) es.close();
+      if(clearTerm !== false) document.getElementById('term').innerHTML='';
       setStatus('RUNNING','b');
-      es=new EventSource(url);
-      es.onmessage=function(e){
-        var d=JSON.parse(e.data);
-        if(d.done){es.close();setStatus('DONE','g');return;}
-        if(d.error){addLine(d.error);es.close();setStatus('ERROR','r');return;}
+      es = new EventSource(url);
+      es.onmessage = function(e){
+        var d = JSON.parse(e.data);
+        if(d.run_id) current_run_id = d.run_id;
+        if(d.done){ es.close(); setStatus('DONE','g'); saveBanner(); return; }
+        if(d.error){ addLine(d.error); es.close(); setStatus('ERROR','r'); return; }
         addLine(d.line);
       };
-      es.onerror=function(){es.close();setStatus('ERROR','r');};
+      es.onerror = function(){ es.close(); setStatus('ERROR','r'); };
     }
-    function run(action){startSSE('/api/run?action='+action);}
+    function run(action){
+      current_run_id = null;
+      startSSE('/api/run?action='+action, true);
+    }
+    function reconnect(){
+      if(!current_run_id) return;
+      startSSE('/api/run/log/'+current_run_id+'?from=0', true);
+    }
+    function saveBanner(){
+      // persist run_id in sessionStorage so reconnect survives a page refresh
+      if(current_run_id) sessionStorage.setItem('last_run_id', current_run_id);
+    }
+
+    // On page load: check if a run is in progress or just finished
+    (function(){
+      fetch('/api/run/status').then(function(r){return r.json();}).then(function(d){
+        if(!d.id) return;
+        current_run_id = d.id;
+        sessionStorage.setItem('last_run_id', d.id);
+        var banner = document.getElementById('reconnect-banner');
+        if(d.status === 'running'){
+          banner.style.display = 'flex';
+          banner.querySelector('#rb-label').textContent =
+            '⚡ Run in progress: ' + d.action + ' (' + d.lines_count + ' lines) — ';
+          setStatus('RUNNING','b');
+          // auto-reconnect
+          startSSE('/api/run/log/'+d.id+'?from=0', true);
+        } else if(d.status === 'done'){
+          banner.style.display = 'flex';
+          banner.querySelector('#rb-label').textContent =
+            '✓ Last run: ' + d.action + ' (' + d.lines_count + ' lines) — ';
+          setStatus('DONE','g');
+        }
+      }).catch(function(){});
+    })();
+
     var MISSION_NODES = %s;
     function updatePbServers(){
       var m=document.getElementById('pb_mission').value;
@@ -1245,16 +1336,17 @@ def deploy():
       }
       nodes.forEach(function(n){
         var o=document.createElement('option');
-        o.value=n;o.textContent=n;
+        o.value=n; o.textContent=n;
         sel.appendChild(o);
       });
     }
     function runPlaybook(){
       var m=document.getElementById('pb_mission').value;
       var s=document.getElementById('pb_srv').value;
-      if(!m){alert('Sélectionne une mission');return;}
-      if(!s){alert('Aucun serveur disponible pour cette mission');return;}
-      startSSE('/api/run?action=playbooks&mission='+encodeURIComponent(m)+'&server='+encodeURIComponent(s));
+      if(!m){alert('Select a mission first');return;}
+      if(!s){alert('No server available for this mission');return;}
+      current_run_id = null;
+      startSSE('/api/run?action=playbooks&mission='+encodeURIComponent(m)+'&server='+encodeURIComponent(s), true);
     }
     function toggleMission(enable){
       var m=document.getElementById('msel').value;
@@ -1494,9 +1586,9 @@ def api_settings_save():
 
 @app.route("/api/run")
 def api_run():
-    action = request.args.get("action","apply")
-    mission = request.args.get("mission","")
-    server = request.args.get("server","")
+    action = request.args.get("action", "apply")
+    mission = request.args.get("mission", "")
+    server  = request.args.get("server", "")
 
     if action == "destroy":
         cmd = ["python3", "redinfra.py", "auto", "--destroy"]
@@ -1505,24 +1597,230 @@ def api_run():
     else:
         cmd = ["python3", "redinfra.py", "auto", "--%s" % action]
 
-    qid = "%s_%d" % (action, int(time.time()*1000))
+    import uuid as _uuid
+    run_id   = _uuid.uuid4().hex
+    started  = time.time()
+    log_file = _run_log_path(run_id, action, started)
+
+    with current_run_lock:
+        current_run.update({
+            "id": run_id, "log_file": log_file,
+            "action": action, "status": "running", "started": started,
+        })
+
+    qid = run_id
     log_queues[qid] = queue.Queue()
-    threading.Thread(target=run_cmd, args=(cmd, qid), daemon=True).start()
+    threading.Thread(target=run_cmd, args=(cmd, qid, log_file), daemon=True).start()
 
     def generate():
-        q = log_queues[qid]
+        q = log_queues.get(qid)
+        if not q:
+            yield "data: %s\n\n" % json.dumps({"done": True})
+            return
         while True:
             line = q.get()
             if line is None:
-                yield "data: %s\n\n" % json.dumps({"done": True})
+                yield "data: %s\n\n" % json.dumps({"done": True, "run_id": run_id})
                 break
-            yield "data: %s\n\n" % json.dumps({"line": line})
-        log_queues.pop(qid, None)
+            yield "data: %s\n\n" % json.dumps({"line": line, "run_id": run_id})
 
     return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/run/status")
+def api_run_status():
+    with current_run_lock:
+        r = dict(current_run)
+    if r["log_file"] and os.path.isfile(r["log_file"]):
+        with open(r["log_file"], encoding="utf-8") as f:
+            r["lines_count"] = sum(1 for _ in f)
+    else:
+        r["lines_count"] = 0
+    r.pop("log_file", None)  # don't expose fs path
+    return jsonify(r)
+
+
+@app.route("/api/run/log/<run_id>")
+def api_run_log(run_id):
+    """SSE stream: replay from line `from` then continue live if still running."""
+    from_line = int(request.args.get("from", 0))
+
+    with current_run_lock:
+        r = dict(current_run)
+
+    # Find log file — match by run_id prefix in filename
+    log_file = None
+    if r.get("id") == run_id:
+        log_file = r.get("log_file")
+    else:
+        for fname in os.listdir(RUNS_DIR):
+            if run_id[:6] in fname:
+                log_file = os.path.join(RUNS_DIR, fname)
+                break
+
+    if not log_file or not os.path.isfile(log_file):
+        def not_found():
+            yield "data: %s\n\n" % json.dumps({"error": "Log not found", "done": True})
+        return Response(not_found(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    def generate():
+        sent = 0
+        # Replay existing lines from `from_line`
+        with open(log_file, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= from_line:
+                    yield "data: %s\n\n" % json.dumps({"line": line.rstrip(), "run_id": run_id})
+                sent = i + 1
+
+        # If run still active, tail live via queue
+        live_q = log_queues.get(run_id)
+        if live_q:
+            while True:
+                line = live_q.get()
+                if line is None:
+                    yield "data: %s\n\n" % json.dumps({"done": True, "run_id": run_id})
+                    break
+                # Avoid duplicates: only emit lines past what we already replayed
+                sent += 1
+                if sent > from_line:
+                    yield "data: %s\n\n" % json.dumps({"line": line, "run_id": run_id})
+        else:
+            yield "data: %s\n\n" % json.dumps({"done": True, "run_id": run_id})
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 # ─── Inventory ───────────────────────────────────────────────────────────────
+
+# ─── Files ───────────────────────────────────────────────────────────────────
+
+import math
+
+FILE_ICONS = {
+    'zip': '🗜', 'tar': '🗜', 'gz': '🗜', '7z': '🗜',
+    'py': '🐍', 'sh': '📜', 'yml': '📋', 'yaml': '📋', 'json': '📋', 'conf': '📋', 'cfg': '📋', 'ini': '📋',
+    'txt': '📄', 'md': '📄', 'log': '📄',
+    'exe': '⚙', 'elf': '⚙', 'bin': '⚙',
+    'pdf': '📕', 'png': '🖼', 'jpg': '🖼', 'jpeg': '🖼', 'gif': '🖼',
+}
+
+def _file_icon(name):
+    ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+    return FILE_ICONS.get(ext, '📦')
+
+def _human_size(n):
+    if n < 1024: return f'{n} B'
+    if n < 1024**2: return f'{n/1024:.1f} KB'
+    if n < 1024**3: return f'{n/1024**2:.1f} MB'
+    return f'{n/1024**3:.1f} GB'
+
+@app.route("/files")
+def files_page():
+    import html as _html
+    entries = []
+    for fname in sorted(os.listdir(FILES_DIR)):
+        fpath = os.path.join(FILES_DIR, fname)
+        if not os.path.isfile(fpath):
+            continue
+        stat = os.stat(fpath)
+        entries.append({
+            'name': fname,
+            'size': _human_size(stat.st_size),
+            'mtime': __import__('datetime').datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+            'icon': _file_icon(fname),
+        })
+
+    rows = ''.join(
+        f'<tr>'
+        f'<td style="font-size:1.3em;width:36px">{e["icon"]}</td>'
+        f'<td style="word-break:break-all"><a href="/api/files/download/{_html.escape(e["name"])}" style="color:var(--green)">{_html.escape(e["name"])}</a></td>'
+        f'<td style="color:var(--text2);white-space:nowrap">{e["size"]}</td>'
+        f'<td style="color:var(--text2);white-space:nowrap">{e["mtime"]}</td>'
+        f'<td><button class="btn btn-sm" style="background:var(--red);padding:3px 10px" '
+        f'onclick="del_file(\'{_html.escape(e["name"])}\')" title="Delete">✕</button></td>'
+        f'</tr>'
+        for e in entries
+    ) or '<tr><td colspan="5" style="color:var(--text2);text-align:center;padding:32px">No files yet.</td></tr>'
+
+    dir_label = FILES_DIR
+    body = f"""
+<h1>📁 Files</h1>
+<p style="color:var(--text2);font-size:.85em;margin-bottom:18px">Directory: <code style="color:var(--orange)">{dir_label}</code></p>
+
+<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;margin-bottom:24px">
+  <form id="upload-form" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <input type="file" id="file-input" multiple
+      style="color:var(--text);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:.85em;cursor:pointer" />
+    <button type="button" class="btn" onclick="upload_files()">⬆ Upload</button>
+    <span id="upload-status" style="color:var(--green);font-size:.85em"></span>
+  </form>
+</div>
+
+<table class="dt" style="width:100%">
+  <thead><tr><th></th><th>Name</th><th>Size</th><th>Modified</th><th></th></tr></thead>
+  <tbody id="files-tbody">{rows}</tbody>
+</table>
+
+<script>
+async function upload_files() {{
+  const input = document.getElementById('file-input');
+  const status = document.getElementById('upload-status');
+  if (!input.files.length) {{ status.textContent = 'No file selected.'; return; }}
+  status.textContent = 'Uploading…';
+  const fd = new FormData();
+  for (const f of input.files) fd.append('files', f);
+  const r = await fetch('/api/files/upload', {{method:'POST', body:fd}});
+  const j = await r.json();
+  if (j.ok) {{ status.textContent = '✓ ' + j.uploaded + ' file(s) uploaded'; setTimeout(()=>location.reload(), 800); }}
+  else {{ status.style.color='var(--red)'; status.textContent = j.error || 'Upload failed'; }}
+}}
+async function del_file(name) {{
+  if (!confirm('Delete ' + name + '?')) return;
+  const r = await fetch('/api/files/delete', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{name}})}});
+  const j = await r.json();
+  if (j.ok) location.reload();
+  else alert(j.error || 'Delete failed');
+}}
+</script>
+"""
+    return nav("Files", "files", body)
+
+
+@app.route("/api/files/upload", methods=["POST"])
+def api_files_upload():
+    from flask import request as req
+    files = req.files.getlist('files')
+    if not files:
+        return {"ok": False, "error": "No files provided"}
+    uploaded = 0
+    for f in files:
+        fname = os.path.basename(f.filename)
+        if fname:
+            f.save(os.path.join(FILES_DIR, fname))
+            uploaded += 1
+    return {"ok": True, "uploaded": uploaded}
+
+
+@app.route("/api/files/download/<path:name>")
+def api_files_download(name):
+    from flask import send_from_directory
+    safe = os.path.basename(name)
+    return send_from_directory(FILES_DIR, safe, as_attachment=True)
+
+
+@app.route("/api/files/delete", methods=["POST"])
+def api_files_delete():
+    from flask import request as req
+    data = req.get_json(force=True)
+    name = os.path.basename(data.get('name', ''))
+    fpath = os.path.join(FILES_DIR, name)
+    if not os.path.isfile(fpath):
+        return {"ok": False, "error": "File not found"}
+    os.remove(fpath)
+    return {"ok": True}
+
 
 @app.route("/inventory")
 def inventory():
@@ -2011,4 +2309,4 @@ def api_inventory_sendgrid():
 if __name__ == "__main__":
     print("🔴 RedInfra Dashboard — http://127.0.0.1:4444")
     print("   Config: %s | Mode: %s" % (CONFIG_PATH, "MOCK" if MOCK_MODE else "LIVE"))
-    app.run(host="127.0.0.1", port=4444, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=4444, debug=False, threaded=True)
