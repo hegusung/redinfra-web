@@ -452,16 +452,14 @@ SERVICES = [
     {
         "id":    "mail",
         "label": "📧 Mail",
-        "playbooks": ["install_mail.yml", "install_gophish.yml"],
-        "fields": [
-            ("mail_domains",      "MAIL DOMAINS & USERS",  "domains_table", "", []),
-            ("mail_sendgrid_pw",  "SENDGRID API KEY",       "password",  "sg-...", ""),
-            ("gophish_mails",     "GOPHISH — SENDING EMAILS",  "chips", "john@domain.com", []),
-            ("gophish_webdomains","GOPHISH — WEB DOMAINS",      "chips", "phish.domain.com", []),
-            ("gophish_rid",       "GOPHISH — RID PARAM",        "text",  "token", "rid"),
-            ("gophish_track_uri", "GOPHISH — TRACKING URI",     "text",  "/track", "/track"),
-            ("gophish_uris",      "GOPHISH — PHISHING URIs",    "chips", "/login", []),
-        ],
+        "playbooks": ["install_mail.yml"],
+        "fields": [],
+    },
+    {
+        "id":    "gophish",
+        "label": "🎯 GoPhish",
+        "playbooks": ["install_gophish.yml"],
+        "fields": [],
     },
     {
         "id":    "o365",
@@ -597,7 +595,8 @@ domains:
         mail: john.doe
         password: admin
 sendgrid_password: SENDGRID_API
-
+""",
+    "gophish": """\
 # install_gophish.yml — GoPhish phishing framework
 mails:
   - john.doe@redteamdomain.com
@@ -607,6 +606,7 @@ gophish_rid: token
 gophish_track_uri: /product
 gophish_uris:
   - /login
+install_smtp2O365: false
 """,
     "o365": """\
 # O365 config — per node (phishing)
@@ -1463,10 +1463,8 @@ def settings():
 
 SVC_PLAYBOOKS_MAP = {
     "web":      [("install_web.yml", lambda a: a)],
-    "mail":     [
-        ("install_mail.yml",    lambda a: {k: v for k, v in a.items() if k not in ("mails", "web_domains", "gophish_rid", "gophish_track_uri", "gophish_uris")}),
-        ("install_gophish.yml", lambda a: {k: v for k, v in a.items() if k not in ("domains", "sendgrid_password")}),
-    ],
+    "mail":     [("install_mail.yml", lambda a: a)],
+    "gophish":  [("install_gophish.yml", lambda a: a)],
     "mythic":   [("install_mythic.yml", lambda a: a)],
     "webdav":   [("install_webdav.yml", lambda a: a)],
     "responder":[("install_responder.yml", lambda a: a)],
