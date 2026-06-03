@@ -606,7 +606,11 @@ gophish_rid: token
 gophish_track_uri: /product
 gophish_uris:
   - /login
-install_smtp2O365: false
+smtp2O365:
+  enabled: false
+  tenant_id: ""
+  client_id: ""
+  client_secret: ""
 """,
     "o365": """\
 # O365 config — per node (phishing)
