@@ -30,7 +30,8 @@ INSTANCE_TYPES = ["","t2.micro","t2.small","t2.medium","t2.large",
 INSTANCE_TYPE_LABELS = {"": "— No instance —"}
 ANSIBLE_PLAYBOOKS = ["install_mail.yml","install_gophish.yml","install_mythic.yml",
                      "install_web.yml","install_webdav.yml","install_responder.yml",
-                     "install_vpn.yml","install_redelk_c2.yml","install_redelk_redirectors.yml","install_node.yml"]
+                     "install_vpn.yml","install_redelk_c2.yml","install_redelk_redirectors.yml",
+                     "install_node.yml","install_payload_server.yml"]
 NODE_TYPES = ["c2","phishing","payloads","responder"]
 
 def itype_opts(selected=""):
@@ -502,6 +503,12 @@ SERVICES = [
         "fields": [],
     },
     {
+        "id":    "payload_server",
+        "label": "📦 Payload Server",
+        "playbooks": ["install_payload_server.yml"],
+        "fields": [],
+    },
+    {
         "id":    "custom",
         "label": "⚙ Custom",
         "playbooks": ["__custom__"],
@@ -595,6 +602,14 @@ domains:
         mail: john.doe
         password: admin
 sendgrid_password: SENDGRID_API
+""",
+    "payload_server": """\
+# install_payload_server.yml — Payload staging server (payload-server)
+mythic_url: https://127.0.0.1:7443
+mythic_username: mythic_admin
+mythic_password: Passw0rd!
+payload_server_url: http://127.0.0.1:7082
+payload_server_token: Passw0rd!
 """,
     "gophish": """\
 # install_gophish.yml — GoPhish phishing framework
@@ -1469,6 +1484,7 @@ SVC_PLAYBOOKS_MAP = {
     "web":      [("install_web.yml", lambda a: a)],
     "mail":     [("install_mail.yml", lambda a: a)],
     "gophish":  [("install_gophish.yml", lambda a: a)],
+    "payload_server": [("install_payload_server.yml", lambda a: a)],
     "mythic":   [("install_mythic.yml", lambda a: a)],
     "webdav":   [("install_webdav.yml", lambda a: a)],
     "responder":[("install_responder.yml", lambda a: a)],
