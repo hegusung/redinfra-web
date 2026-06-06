@@ -965,7 +965,7 @@ def mission_form(cfg, edit):
                     if svc_comment else ""
                 ) +
                 '<div class="fg-group"><label class="fg">CONFIGURATION <small>(YAML)</small></label>'
-                '<textarea id="svc_' + str(idx) + '_' + svc["id"] + '_yaml" style="height:140px;font-size:.8em;font-family:monospace">'
+                '<textarea id="svc_' + str(idx) + '_' + svc["id"] + '_yaml" style="height:260px;font-size:.8em;font-family:monospace">'
                 + yaml_content + '</textarea></div>'
             )
             panes += '<div class="pane%s" data-grp="nsvc%s" data-tab="%s">%s</div>' % (on, idx, tab_id, pane)
@@ -1096,7 +1096,7 @@ function buildSvcTabs(idx) {
       +'<div class="toggle"><input type="checkbox" id="svc_'+idx+'_'+svc.id+'_enabled"><span class="slider"></span></div>'
       +'<span style="color:var(--text2);font-size:.85em"> Enable</span></label>'
       +'<div class="fg-group"><label class="fg">CONFIGURATION <small>(YAML)</small></label>'
-      +'<textarea id="svc_'+idx+'_'+svc.id+'_yaml" style="height:140px;font-size:.8em;font-family:monospace">'+tpl+'</textarea>'
+      +'<textarea id="svc_'+idx+'_'+svc.id+'_yaml" style="height:260px;font-size:.8em;font-family:monospace">'+tpl+'</textarea>'
       +'</div></div>';
   });
   return '<hr style="border:none;border-top:1px solid #252930;margin:14px 0">'
