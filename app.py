@@ -444,6 +444,7 @@ def index():
 SERVICES = [
     {
         "id":    "web",
+        "comment": "Nginx reverse proxy with geo-filtering. Configure allowed/denied countries and ASNs per location. Used as redirector in front of C2 or phishing infra.\nListening on ports 80 and 443",
         "label": "🌐 Web Server",
         "playbooks": ["install_web.yml"],
         "fields": [
@@ -452,18 +453,21 @@ SERVICES = [
     },
     {
         "id":    "mail",
+        "comment": "Installs Postfix, Dovecot and Roundcube. Configures SendGrid relay for outbound delivery. Define mail domains and user accounts.",
         "label": "📧 Mail",
         "playbooks": ["install_mail.yml"],
         "fields": [],
     },
     {
         "id":    "gophish",
+        "comment": "GoPhish phishing framework. Configure sending mailboxes, phishing web domains, tracking URI and RID parameter. Enable smtp2O365 to relay through an Azure tenant instead of direct SMTP.",
         "label": "🎯 GoPhish",
         "playbooks": ["install_gophish.yml"],
         "fields": [],
     },
     {
         "id":    "o365",
+        "comment": "Azure AD / Office 365 tenant configuration. Creates domains, mailboxes and licenses via the Microsoft Graph API. Not an Ansible playbook — config is written directly into the node YAML.",
         "label": "🔷 O365",
         "playbooks": [],
         "fields": [
@@ -475,6 +479,7 @@ SERVICES = [
     },
     {
         "id":    "mythic",
+        "comment": "Mythic C2 framework. Specify the admin password and any GitHub extension repositories to install (C2 profiles, agents).",
         "label": "💀 Mythic",
         "playbooks": ["install_mythic.yml"],
         "fields": [
@@ -484,6 +489,7 @@ SERVICES = [
     },
     {
         "id":    "webdav",
+        "comment": "Nginx WebDAV server with optional Let's Encrypt. Useful for hosting macro documents or staging payloads. Supports per-domain geo-filtering.",
         "label": "📁 WebDAV",
         "playbooks": ["install_webdav.yml"],
         "fields": [
@@ -492,24 +498,28 @@ SERVICES = [
     },
     {
         "id":    "responder",
+        "comment": "LLMNR/NBT-NS/mDNS poisoner. Useful for internal network credential harvesting during assumed-breach engagements.",
         "label": "🔊 Responder",
         "playbooks": ["install_responder.yml"],
         "fields": [],
     },
     {
         "id":    "redelk",
+        "comment": "Centralized logging stack for red team ops. Installs on C2 and redirector nodes. Provides SOC-detection correlation and operator dashboards.",
         "label": "🦌 RedELK",
         "playbooks": ["install_redelk_c2.yml", "install_redelk_redirectors.yml"],
         "fields": [],
     },
     {
         "id":    "payload_server",
+        "comment": "Standalone payload staging server with content-type masking, magic-byte padding and XOR/Base64/NetBIOS transforms. Integrates with Mythic for automated payload upload.",
         "label": "📦 Payload Server",
         "playbooks": ["install_payload_server.yml"],
         "fields": [],
     },
     {
         "id":    "custom",
+        "comment": "",
         "label": "⚙ Custom",
         "playbooks": ["__custom__"],
         "fields": [],
@@ -701,6 +711,7 @@ def build_services_section(cfg):
     # Collect existing ansible from all nodes
     existing_by_svc = {}
     skip = {"mission","enabled"}
+    mission_notes = cfg.get("mission_notes", {}) if isinstance(cfg, dict) else {}
     for key, val in cfg.items():
         if key in skip or not isinstance(val, dict): continue
         for pb in val.get("ansible", []):
@@ -756,7 +767,24 @@ def build_services_section(cfg):
             '</textarea></div>'
         )
 
-        pane_content = toggle + node_sel + yaml_area
+        # Service comment block — editable, stored outside ansible YAML
+        import html as _html
+        default_comment = svc.get('comment', '')
+        saved_comment = mission_notes.get(svc['id'], default_comment)
+        comment_block = (
+            '<div class="fg-group" style="margin-bottom:14px">'
+            '<label class="fg" style="display:flex;justify-content:space-between">'
+            '<span>NOTES</span>'
+            '<span style="font-weight:normal;color:var(--text2);font-size:.8em;text-transform:none">Saved with mission, not passed to Ansible</span>'
+            '</label>'
+            '<textarea id="svc_' + svc['id'] + '_comment" rows="3" '
+            'style="height:auto;font-size:.82em;line-height:1.6;resize:vertical;color:var(--text2)">'
+            + _html.escape(saved_comment) +
+            '</textarea>'
+            '</div>'
+        )
+
+        pane_content = toggle + comment_block + node_sel + yaml_area
         panes_html += '<div class="pane%s" data-grp="svc" data-tab="%s">%s</div>' % (on, svc["id"], pane_content)
 
     tabs_html += '</div>'
@@ -921,11 +949,21 @@ def mission_form(cfg, edit):
             is_enabled = svc["id"] in existing_by_svc
             enabled_checked = "checked" if is_enabled else ""
 
+            import html as _html_esc
+            svc_comment = svc.get("comment", "")
             pane = (
                 '<label class="tlabel" style="margin-bottom:12px;display:flex">'
                 '<div class="toggle"><input type="checkbox" id="svc_' + str(idx) + '_' + svc["id"] + '_enabled" ' + enabled_checked + '>'
                 '<span class="slider"></span></div>'
                 '<span style="color:var(--text2);font-size:.85em"> Enable</span></label>'
+                + (
+                    '<div style="background:rgba(68,136,255,.07);border:1px solid rgba(68,136,255,.18);'
+                    'border-radius:6px;padding:9px 13px;margin-bottom:12px;font-size:.8em;'
+                    'color:var(--text2);line-height:1.6;white-space:pre-wrap">'
+                    + _html_esc.escape(svc_comment) +
+                    '</div>'
+                    if svc_comment else ""
+                ) +
                 '<div class="fg-group"><label class="fg">CONFIGURATION <small>(YAML)</small></label>'
                 '<textarea id="svc_' + str(idx) + '_' + svc["id"] + '_yaml" style="height:140px;font-size:.8em;font-family:monospace">'
                 + yaml_content + '</textarea></div>'
@@ -1505,6 +1543,7 @@ def api_mission_save():
         # Process _services: parse YAML and assign ansible to nodes
         services   = data.pop("_services", [])
         node_names = data.pop("_node_names", {})
+        data.pop("_svc_notes", {})  # no longer used
         # node_names is {str(idx): node_type_name}
 
         for svc in services:
