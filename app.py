@@ -444,7 +444,7 @@ def index():
 SERVICES = [
     {
         "id":    "web",
-        "comment": "Nginx reverse proxy with geo-filtering. Configure allowed/denied countries and ASNs per location. Used as redirector in front of C2 or phishing infra.\nListening on ports 80 and 443",
+        "comment": "Nginx reverse proxy with geo-filtering. Configure allowed/denied countries and ASNs per location. Used as redirector in front of C2 or phishing infra.\nListens on ports 80 and 443",
         "label": "🌐 Web Server",
         "playbooks": ["install_web.yml"],
         "fields": [
@@ -453,21 +453,21 @@ SERVICES = [
     },
     {
         "id":    "mail",
-        "comment": "Installs Postfix, Dovecot and Roundcube. Configures SendGrid relay for outbound delivery. Define mail domains and user accounts.",
+        "comment": "Installs Postfix, Dovecot and Roundcube. Configures SendGrid relay for outbound delivery. Define mail domains and user accounts.\nPostfix listens on ports 25\nRoundcube is accessible on port 8000",
         "label": "📧 Mail",
         "playbooks": ["install_mail.yml"],
         "fields": [],
     },
     {
         "id":    "gophish",
-        "comment": "GoPhish phishing framework. Configure sending mailboxes, phishing web domains, tracking URI and RID parameter. Enable smtp2O365 to relay through an Azure tenant instead of direct SMTP.",
+        "comment": "GoPhish phishing framework. Configure sending mailboxes, phishing web domains, tracking URI and RID parameter. Enable smtp2O365 to relay through an Azure tenant instead of direct SMTP.\nGophish is accessible on port 3333\nGophish phishing server is accessible on port 81",
         "label": "🎯 GoPhish",
         "playbooks": ["install_gophish.yml"],
         "fields": [],
     },
     {
         "id":    "o365",
-        "comment": "Azure AD / Office 365 tenant configuration. Creates domains, mailboxes and licenses via the Microsoft Graph API. Not an Ansible playbook — config is written directly into the node YAML.",
+        "comment": "Azure AD / Office 365 tenant configuration. Creates domains, mailboxes and licenses via the Microsoft Graph API. Not an Ansible playbook — config is written directly into the node YAML.\nConfigured mailboxes can be accessed at https://outlook.office.com/",
         "label": "🔷 O365",
         "playbooks": [],
         "fields": [
@@ -479,7 +479,7 @@ SERVICES = [
     },
     {
         "id":    "mythic",
-        "comment": "Mythic C2 framework. Specify the admin password and any GitHub extension repositories to install (C2 profiles, agents).",
+        "comment": "Mythic C2 framework. Specify the admin password and any GitHub extension repositories to install (C2 profiles, agents).\nMythic server is accessible on port 7443",
         "label": "💀 Mythic",
         "playbooks": ["install_mythic.yml"],
         "fields": [
@@ -489,7 +489,7 @@ SERVICES = [
     },
     {
         "id":    "webdav",
-        "comment": "Nginx WebDAV server with optional Let's Encrypt. Useful for hosting macro documents or staging payloads. Supports per-domain geo-filtering.",
+        "comment": "Nginx WebDAV server with optional Let's Encrypt. Useful for hosting macro documents or staging payloads. Supports per-domain geo-filtering.\nListens on ports 80 and 443",
         "label": "📁 WebDAV",
         "playbooks": ["install_webdav.yml"],
         "fields": [
@@ -512,7 +512,7 @@ SERVICES = [
     },
     {
         "id":    "payload_server",
-        "comment": "Standalone payload staging server with content-type masking, magic-byte padding and XOR/Base64/NetBIOS transforms. Integrates with Mythic for automated payload upload.",
+        "comment": "Standalone payload staging server with content-type masking, magic-byte padding and XOR/Base64/NetBIOS transforms. Integrates with Mythic for automated payload upload.\nPayloads are delivered on port 8443\nPayload server management interface is accessible on port 7082\nMythic payload automation web interface is accessible on port 7080",
         "label": "📦 Payload Server",
         "playbooks": ["install_payload_server.yml"],
         "fields": [],
