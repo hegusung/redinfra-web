@@ -95,11 +95,11 @@ def get_mission_config(name):
 def save_mission(data):
     fname = os.path.join(CONFIG_PATH, "%s.yml" % data["mission"])
     with open(fname, "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 def save_main(data):
     with open(os.path.join(CONFIG_PATH, "main.yml"), "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 # ─── Deploy runner ────────────────────────────────────────────────────────────
 
@@ -736,7 +736,7 @@ def build_services_section(cfg):
 
         # If existing args, show them; otherwise show the template
         if existing_args:
-            yaml_content = yaml.dump(existing_args, default_flow_style=False, allow_unicode=True)
+            yaml_content = yaml.dump(existing_args, default_flow_style=False, allow_unicode=True, sort_keys=False)
         else:
             yaml_content = SVC_YAML_TEMPLATES.get(svc["id"], "# No arguments\n")
 
@@ -938,11 +938,11 @@ def mission_form(cfg, edit):
             if svc["id"] == "custom":
                 if existing_args:
                     # existing_args is a list of playbook entries
-                    yaml_content = yaml.dump(existing_args, default_flow_style=False, allow_unicode=True)
+                    yaml_content = yaml.dump(existing_args, default_flow_style=False, allow_unicode=True, sort_keys=False)
                 else:
                     yaml_content = SVC_YAML_TEMPLATES.get("custom", "")
             elif existing_args:
-                yaml_content = yaml.dump(existing_args, default_flow_style=False, allow_unicode=True)
+                yaml_content = yaml.dump(existing_args, default_flow_style=False, allow_unicode=True, sort_keys=False)
             else:
                 yaml_content = SVC_YAML_TEMPLATES.get(svc["id"], "# No arguments\n")
 
