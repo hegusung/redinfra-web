@@ -614,6 +614,7 @@ SVC_YAML_TEMPLATES = {
 web_domains:
   - site: www.redteamdomain.com
     letsencrypt: false
+    letsencrypt_email: "admin@redteamdomain.com"
     locations:
       - location: /payloads/
         fallback_path: /
