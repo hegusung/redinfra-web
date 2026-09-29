@@ -23,16 +23,32 @@ os.makedirs(CONFIG_PATH, exist_ok=True)
 FILES_DIR = "/tmp/redinfra-demo/files" if MOCK_MODE else os.path.join(BASE_PATH, "files")
 os.makedirs(FILES_DIR, exist_ok=True)
 
-AWS_REGIONS = ["eu-west-1","eu-west-2","eu-west-3","eu-north-1","eu-central-1",
-               "us-east-1","us-east-2","us-west-1","us-west-2","ap-southeast-1","ap-northeast-1"]
-INSTANCE_TYPES = ["","t2.micro","t2.small","t2.medium","t2.large",
-                  "t3.micro","t3.small","t3.medium","t3.large","c5.large","c5.xlarge"]
+INSTANCE_TYPES = ["","t2.micro","t3.micro"]
 INSTANCE_TYPE_LABELS = {"": "— No instance —"}
-ANSIBLE_PLAYBOOKS = ["install_mail.yml","install_gophish.yml","install_mythic.yml",
-                     "install_web.yml","install_webdav.yml","install_responder.yml",
-                     "install_vpn.yml","install_redelk_c2.yml","install_redelk_redirectors.yml",
-                     "install_node.yml","install_payload_server.yml"]
-NODE_TYPES = ["c2","phishing","payloads","responder"]
+
+def get_aws_regions():
+    """AWS regions offered in the UI, read from "aws_regions" in main.yml.
+
+    Returns an empty list when the key is missing or empty: there is no built-in
+    fallback, the YAML config is the only source.
+    """
+    try:
+        raw = get_main_config().get("aws_regions")
+    except Exception:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(r).strip() for r in raw if str(r).strip()]
+
+def region_opts(selected=""):
+    regions = get_aws_regions()
+    # Never drop a region already set in a config just because it is missing from the list
+    if selected and selected not in regions:
+        regions = regions + [selected]
+    return "".join(
+        '<option value="%s"%s>%s</option>' % (r, ' selected' if r == selected else '', r)
+        for r in regions
+    )
 
 def itype_opts(selected=""):
     return "".join(
@@ -54,7 +70,6 @@ def get_missions():
             with open(f) as fh:
                 cfg = yaml.safe_load(fh) or {}
             # Detect node keys: top-level dict entries that look like node configs (have region or instance_type)
-            # Also keep NODE_TYPES for backward compat with mock missions
             nodes = [k for k, v in cfg.items()
                      if isinstance(v, dict) and ('region' in v or 'instance_type' in v or 'local_ip' in v)
                      and k not in ('api', 'routing', 'tags')]
@@ -77,7 +92,8 @@ def get_main_config():
         "api": {"aws_key":"","aws_secret":"","cloudflare_key":"","sendgrid_api":"","o365":[]},
         "tags": {"Team":"RedTeam","Owner":""},
         "routing": {"vpn_interface":"tap0","iptables_chain":"redinfra","vpn_range":"192.168.40.0/24","rule_start_table":10,"rule_priority":30000},
-        "vpn": {"region":"eu-west-1","instance_type":"t2.micro"}
+        "vpn": {"region":"eu-west-1","instance_type":"t2.micro"},
+        "aws_regions": []
     }
 
 def get_mission_config(name):
@@ -98,8 +114,18 @@ def save_mission(data):
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 def save_main(data):
-    with open(os.path.join(CONFIG_PATH, "main.yml"), "w") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    """Save main.yml, preserving top-level keys the settings form does not send (e.g. aws_regions)."""
+    path = os.path.join(CONFIG_PATH, "main.yml")
+    merged = {}
+    if os.path.exists(path):
+        try:
+            with open(path) as fh:
+                merged = yaml.safe_load(fh) or {}
+        except Exception:
+            merged = {}
+    merged.update(data or {})
+    with open(path, "w") as f:
+        yaml.dump(merged, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 # ─── Deploy runner ────────────────────────────────────────────────────────────
 
@@ -258,7 +284,7 @@ input:checked+.slider:before{{transform:translateX(20px);background:var(--green)
 </style>
 """
 
-NAV_TPL = """<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+NAV_TPL = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RedInfra — {title}</title>
 """ + CSS + """
@@ -696,12 +722,12 @@ scenario_name: test_scenario
 redelk_url: 192.168.1.52:5044
 """,
     "custom": """\
-# Playbooks custom — liste libre
-# Ajouter autant d'entrées que nécessaire
-- playbook: mon_playbook.yml
+# Custom playbooks — free list
+# Add as many entries as needed
+- playbook: my_playbook.yml
   args:
-    variable: valeur
-    autre_var: autre_valeur
+    variable: value
+    other_var: other_value
 # - playbook: second_playbook.yml
 #   args: {}
 """,
@@ -795,7 +821,7 @@ def build_services_section(cfg):
 def build_node_pane(node, cfg, color, is_new=False):
     nc = cfg.get(node, {})
     # Region select
-    reg_opts = "".join('<option value="%s"%s>%s</option>' % (r, ' selected' if nc.get("region")==r else '', r) for r in AWS_REGIONS)
+    reg_opts = region_opts(nc.get("region",""))
     # Instance type select
     it_opts = itype_opts(nc.get("instance_type",""))
     # Chips
@@ -899,8 +925,6 @@ def mission_form(cfg, edit):
     title_prefix = "✏ " if edit else "+ "
 
     # Build nodes HTML
-    reg_opts_html = "".join('<option value="%s">%s</option>' % (r,r) for r in AWS_REGIONS)
-    it_opts_html  = "".join('<option value="%s">%s</option>' % (t,t) for t in INSTANCE_TYPES)
 
     def node_services_html(idx, nc):
         """Build the services/playbooks tabs for a specific node."""
@@ -981,7 +1005,7 @@ def mission_form(cfg, edit):
         port_chips = "".join('<span class="chip chip-b" data-v="%s">%s <button type="button" onclick="this.parentElement.remove()">x</button></span>' % (p,p) for p in nc.get("ports",[]))
         dnsa_chips = "".join('<span class="chip chip-g" data-v="%s">%s <button type="button" onclick="this.parentElement.remove()">x</button></span>' % (d,d) for d in nc.get("dns_A",[]))
         dnsp_chips = "".join('<span class="chip chip-g" data-v="%s">%s <button type="button" onclick="this.parentElement.remove()">x</button></span>' % (d,d) for d in nc.get("dns_proxy",[]))
-        reg_opts = "".join('<option value="%s"%s>%s</option>' % (r,' selected' if nc.get("region")==r else '',r) for r in AWS_REGIONS)
+        reg_opts = region_opts(nc.get("region",""))
         it_opts  = itype_opts(nc.get("instance_type",""))
         i = str(idx)
         chips_html = (
@@ -999,7 +1023,7 @@ def mission_form(cfg, edit):
             '<button type="button" class="btn btn-r" style="padding:4px 10px;font-size:.75em" onclick="removeNode(' + i + ')">✕ Remove</button>'
             '</div>'
             '<div class="g3">'
-            '<div class="fg-group"><label class="fg">SERVER TYPE <small>(nom libre)</small></label>'
+            '<div class="fg-group"><label class="fg">SERVER TYPE <small>(free text)</small></label>'
             '<input type="text" id="node_' + i + '_type" value="' + node_name + '" placeholder="c2 / phishing / redirector1"></div>'
             '<div class="fg-group"><label class="fg">AWS REGION</label><select id="node_' + i + '_region">' + reg_opts + '</select></div>'
             '<div class="fg-group"><label class="fg">INSTANCE TYPE</label><select id="node_' + i + '_itype">' + it_opts + '</select></div>'
@@ -1206,7 +1230,7 @@ function saveMission() {
         var itype = g('node_'+ni+'_itype');
         if (itype) {
           data[fallback] = {
-            region: g('node_'+ni+'_region') || 'eu-west-1',
+            region: g('node_'+ni+'_region') || (REGIONS[0] || ''),
             instance_type: itype,
             local_ip: g('node_'+ni+'_lip') || '',
             ports: gChips('node_'+ni+'_ports').map(Number),
@@ -1232,7 +1256,7 @@ function saveMission() {
 }
 </script>""" \
     .replace("NODE_COUNT_PH", str(len(existing_nodes))) \
-    .replace("REGIONS_PH", json.dumps(AWS_REGIONS)) \
+    .replace("REGIONS_PH", json.dumps(get_aws_regions())) \
     .replace("ITYPES_PH", json.dumps([{"v": t, "l": INSTANCE_TYPE_LABELS.get(t, t)} for t in INSTANCE_TYPES])) \
     .replace("SVC_DEFS_PH", svc_defs_js) \
     .replace("SVC_YAML_PH", json.dumps({s["id"]: SVC_YAML_TEMPLATES.get(s["id"],"# No arguments\n") for s in SERVICES}, ensure_ascii=False))
@@ -1427,8 +1451,8 @@ def settings():
     o365_rows = ""
     for t in (api.get("o365") or []):
         o365_rows += '<tr><td><input type="text" value="%s"></td><td><input type="text" value="%s"></td><td><input type="password" value="%s"></td><td><button type="button" onclick="this.closest(\'tr\').remove()" style="background:none;border:none;color:var(--red);cursor:pointer">×</button></td></tr>' % (t.get("tenant_id",""), t.get("client_id",""), t.get("client_secret",""))
-    reg_opts = "".join('<option value="%s"%s>%s</option>' % (r,' selected' if vpn.get("region")==r else '',r) for r in AWS_REGIONS)
-    it_opts = "".join('<option value="%s"%s>%s</option>' % (t,' selected' if vpn.get("instance_type")==t else '',t) for t in INSTANCE_TYPES)
+    reg_opts = region_opts(vpn.get("region",""))
+    it_opts = itype_opts(vpn.get("instance_type",""))
     def _e(v):
         """Escape a value for safe HTML attribute insertion."""
         return str(v).replace("&","&amp;").replace('"','&quot;').replace("<","&lt;").replace(">","&gt;")
@@ -1491,7 +1515,7 @@ def settings():
     'if(k)tags[k]=v;});'
     'var data={'
     'api:{aws_key:document.getElementById("aws_key").value,aws_secret:document.getElementById("aws_secret").value,cloudflare_key:document.getElementById("cf_key").value,sendgrid_api:document.getElementById("sg_key").value,o365:o365},'
-    'routing:{vpn_interface:document.getElementById("vpn_iface").value,iptables_chain:document.getElementById("ipt_chain").value,vpn_range:document.getElementById("vpn_range").value,rule_start_table:10,rule_priority:30000},'
+    'routing:{vpn_interface:document.getElementById("vpn_iface").value,iptables_chain:document.getElementById("ipt_chain").value,vpn_range:document.getElementById("vpn_range").value,rule_start_table:__RULE_START_TABLE__,rule_priority:__RULE_PRIORITY__},'
     'vpn:{region:document.getElementById("vpn_reg").value,instance_type:document.getElementById("vpn_itype").value},'
     'tags:tags};'
     'fetch("/api/settings/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)})'
@@ -1505,6 +1529,8 @@ def settings():
     ).replace("__VPN_IFACE__", _e(routing.get("vpn_interface","tap0"))
     ).replace("__IPT_CHAIN__", _e(routing.get("iptables_chain","redinfra"))
     ).replace("__VPN_RANGE__", _e(routing.get("vpn_range","192.168.40.0/24"))
+    ).replace("__RULE_START_TABLE__", json.dumps(routing.get("rule_start_table", 10))
+    ).replace("__RULE_PRIORITY__", json.dumps(routing.get("rule_priority", 30000))
     ).replace("__VPN_REG__", reg_opts
     ).replace("__VPN_ITYPE__", it_opts
     ).replace("__TAG_ROWS__", "".join(
@@ -2088,7 +2114,7 @@ def api_inventory_aws():
         ]
 
         instances = []
-        for region in AWS_REGIONS:
+        for region in get_aws_regions():
             try:
                 ec2 = session.client("ec2", region_name=region)
                 resp = ec2.describe_instances(Filters=filters) if filters else ec2.describe_instances()
@@ -2364,6 +2390,8 @@ def api_inventory_sendgrid():
 
 
 if __name__ == "__main__":
-    print("🔴 RedInfra Dashboard — http://127.0.0.1:4444")
+    HOST = "0.0.0.0"
+    PORT = 4444
+    print("🔴 RedInfra Dashboard — http://%s:%s" % (HOST, PORT))
     print("   Config: %s | Mode: %s" % (CONFIG_PATH, "MOCK" if MOCK_MODE else "LIVE"))
-    app.run(host="0.0.0.0", port=4444, debug=False, threaded=True)
+    app.run(host=HOST, port=PORT, debug=False, threaded=True)
