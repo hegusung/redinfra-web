@@ -618,6 +618,7 @@ web_domains:
       - location: /payloads/
         fallback_path: /
         webdav: false
+        websocket: false
         allow:
           country:
             - ES
