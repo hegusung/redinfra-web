@@ -613,9 +613,11 @@ SVC_YAML_TEMPLATES = {
 # install_web.yml — Nginx web server
 web_domains:
   - site: www.redteamdomain.com
+    letsencrypt: false
     locations:
       - location: /payloads/
         fallback_path: /
+        webdav: false
         allow:
           country:
             - ES
