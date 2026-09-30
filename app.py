@@ -674,6 +674,8 @@ o365:
       services:
         - Email
         - OfficeCommunicationsOnline
+        - TeamsCommunicationsOnline
+        - MicrosoftCommunicationsOnline
       emails:
         - name: "John Doe"
           email: john@redteamdomain.com
