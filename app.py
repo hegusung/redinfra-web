@@ -655,8 +655,6 @@ payload_server_token: Passw0rd!
 # install_gophish.yml — GoPhish phishing framework
 mails:
   - john.doe@redteamdomain.com
-web_domains:
-  - test2.redteamdomain.com
 gophish_rid: token
 gophish_track_uri: /product
 gophish_uris:
