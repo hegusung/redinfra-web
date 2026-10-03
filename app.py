@@ -697,6 +697,7 @@ o365:
     "mythic": """\
 # install_mythic.yml — Mythic C2 framework
 mythic_password: Passw0rd!
+default_operation_name: Test
 github_extensions:
   - https://github.com/MythicC2Profiles/httpx
   - https://github.com/MythicC2Profiles/smb
