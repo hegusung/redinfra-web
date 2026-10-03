@@ -16,6 +16,18 @@ import yaml
 
 app = Flask(__name__)
 
+# Upload ceiling, in MB per upload. The request limit adds 1 MB on top, because the
+# multipart envelope (boundaries + per-part headers) makes the body slightly larger
+# than the file itself. nginx allows 52m, just above this, so an oversized upload is
+# rejected here and answered as JSON rather than as an nginx HTML error page.
+MAX_UPLOAD_MB = 50
+app.config["MAX_CONTENT_LENGTH"] = (MAX_UPLOAD_MB + 1) * 1024 * 1024
+
+@app.errorhandler(413)
+def _upload_too_large(e):
+    return {"ok": False,
+            "error": "File too large — the limit is %d MB per upload." % MAX_UPLOAD_MB}, 413
+
 BASE_PATH = os.environ.get("REDINFRA_PATH", "/opt/redinfra")
 MOCK_MODE = not os.path.exists(BASE_PATH)
 CONFIG_PATH = "/tmp/redinfra-demo/config" if MOCK_MODE else os.path.join(BASE_PATH, "config")
@@ -1841,6 +1853,7 @@ def files_page():
     <input type="file" id="file-input" multiple
       style="color:var(--text);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:.85em;cursor:pointer" />
     <button type="button" class="btn" onclick="upload_files()">⬆ Upload</button>
+    <span style="color:var(--text2);font-size:.78em">max {MAX_UPLOAD_MB} MB</span>
     <span id="upload-status" style="color:var(--green);font-size:.85em"></span>
   </form>
 </div>
@@ -1854,14 +1867,30 @@ def files_page():
 async function upload_files() {{
   const input = document.getElementById('file-input');
   const status = document.getElementById('upload-status');
-  if (!input.files.length) {{ status.textContent = 'No file selected.'; return; }}
+  if (!input.files.length) {{ status.style.color='var(--red)'; status.textContent = 'No file selected.'; return; }}
+  status.style.color = 'var(--green)';
   status.textContent = 'Uploading…';
   const fd = new FormData();
   for (const f of input.files) fd.append('files', f);
-  const r = await fetch('/api/files/upload', {{method:'POST', body:fd}});
-  const j = await r.json();
-  if (j.ok) {{ status.textContent = '✓ ' + j.uploaded + ' file(s) uploaded'; setTimeout(()=>location.reload(), 800); }}
-  else {{ status.style.color='var(--red)'; status.textContent = j.error || 'Upload failed'; }}
+  const fail = function(msg) {{ status.style.color='var(--red)'; status.textContent = msg; }};
+  try {{
+    const r = await fetch('/api/files/upload', {{method:'POST', body:fd}});
+    // A proxy rejection (413, 502, timeout) replies with HTML, so parsing may fail
+    let j = null;
+    try {{ j = await r.json(); }} catch (e) {{ j = null; }}
+    if (r.ok && j && j.ok) {{
+      status.textContent = '✓ ' + j.uploaded + ' file(s) uploaded';
+      setTimeout(()=>location.reload(), 800);
+    }} else if (j && j.error) {{
+      fail(j.error);
+    }} else if (r.status === 413) {{
+      fail('File too large — the limit is {MAX_UPLOAD_MB} MB per upload.');
+    }} else {{
+      fail('Upload failed — HTTP ' + r.status + ' ' + r.statusText);
+    }}
+  }} catch (e) {{
+    fail('Upload failed — ' + e.message);
+  }}
 }}
 async function del_file(name) {{
   if (!confirm('Delete ' + name + '?')) return;
