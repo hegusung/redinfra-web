@@ -9,6 +9,7 @@ Flask single-file app — no database, no frontend build step, just Python + YAM
 
 - **Dashboard** — overview of all missions (enabled/disabled), node count, quick actions
 - **Mission editor** — create/edit missions with multiple AWS nodes, DNS records, ports, services
+- **Export / import** — download a mission as its standard redinfra YAML file, or import one back from the Dashboard
 - **Services per node** — Web, Mail (Postfix + GoPhish), O365, Mythic C2, WebDAV, Responder, RedELK — each configured via YAML editor with toggle
 - **Deploy panel** — one-click Deploy All / Destroy, or run individual steps (Terraform, Cloudflare, SendGrid, O365, Routing, Ansible); real-time terminal output via SSE
 - **Playbook runner** — run Ansible playbooks per mission/node from the UI

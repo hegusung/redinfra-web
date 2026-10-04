@@ -120,9 +120,29 @@ def get_mission_config(name):
             pass
     return {"mission": name, "enabled": False}
 
+RESERVED_CONFIG_NAMES = ("main", "aws")
+
+def mission_filename(name):
+    """Config path for a mission name.
+
+    Only rejects what is actually unsafe — path separators, control characters and a
+    leading dot would let a name escape CONFIG_PATH or hide the file — so any name
+    that already worked keeps working.
+    """
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("Mission name required")
+    if name.startswith("."):
+        raise ValueError("Mission name cannot start with a dot")
+    bad = [c for c in name if c in "/\\" or ord(c) < 32]
+    if bad:
+        raise ValueError("Mission name cannot contain path separators or control characters")
+    if name.lower() in RESERVED_CONFIG_NAMES:
+        raise ValueError("'%s' is reserved for the redinfra config" % name)
+    return os.path.join(CONFIG_PATH, "%s.yml" % name)
+
 def save_mission(data):
-    fname = os.path.join(CONFIG_PATH, "%s.yml" % data["mission"])
-    with open(fname, "w") as f:
+    with open(mission_filename(data["mission"]), "w") as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 def save_main(data):
@@ -408,18 +428,24 @@ def index():
     missions = get_missions()
     total_nodes = sum(len(m["nodes"]) for m in missions)
     enabled = sum(1 for m in missions if m["enabled"])
+    import html as _html
+    from urllib.parse import quote as _q
     rows = ""
     for m in missions:
         badge = '<span class="badge bg">ENABLED</span>' if m["enabled"] else '<span class="badge br">DISABLED</span>'
+        name_h = _html.escape(m["name"])
+        name_u = _q(m["name"], safe="")
+        name_j = _html.escape(json.dumps(m["name"]))
         rows += """
         <div class="mrow">
           <div style="font-weight:bold">%s</div>
           <div style="display:flex;align-items:center;gap:10px">
             %s
+            <a href="/api/mission/export/%s" class="btn btn-s" title="Download the mission YAML">⬇ Export</a>
             <a href="/mission/%s/edit" class="btn btn-s">✏ Edit</a>
-            <button onclick="deleteMission('%s')" class="btn btn-r">🗑 Delete</button>
+            <button onclick="deleteMission(%s)" class="btn btn-r">🗑 Delete</button>
           </div>
-        </div>""" % (m["name"], badge, m["name"], m["name"])
+        </div>""" % (name_h, badge, name_u, name_u, name_j)
     if not rows:
         rows = '<div style="text-align:center;padding:40px;color:var(--text2)">No missions yet. <a href="/mission/new">Create your first →</a></div>'
 
@@ -454,6 +480,44 @@ def index():
       };
     }
     document.addEventListener('keydown', function(e){ if(e.key==='Escape') document.getElementById('modal').style.display='none'; });
+
+    async function importMission(overwrite) {
+      var input = document.getElementById('import-input');
+      var status = document.getElementById('import-status');
+      if (!input.files.length) return;
+      var file = input.files[0];
+      var fail = function(msg) { status.style.color = 'var(--red)'; status.textContent = msg; };
+      status.style.color = 'var(--text2)';
+      status.textContent = 'Importing ' + file.name + '…';
+      var fd = new FormData();
+      fd.append('file', file);
+      if (overwrite) fd.append('overwrite', 'true');
+      try {
+        var r = await fetch('/api/mission/import', {method:'POST', body:fd});
+        var j = null;
+        try { j = await r.json(); } catch (e) { j = null; }   // a proxy error replies with HTML
+        if (r.ok && j && j.ok) {
+          status.style.color = 'var(--green)';
+          status.textContent = '✓ ' + j.mission + ' imported (' + j.nodes + ' node(s))';
+          setTimeout(function(){ window.location.reload(); }, 700);
+          return;
+        }
+        if (j && j.exists) {
+          status.textContent = '';
+          if (confirm("Mission '" + j.mission + "' already exists.\\nReplace its config file?")) {
+            importMission(true);
+          } else {
+            input.value = '';
+          }
+          return;
+        }
+        input.value = '';
+        fail(j && j.error ? j.error : 'Import failed — HTTP ' + r.status + ' ' + r.statusText);
+      } catch (e) {
+        input.value = '';
+        fail('Import failed — ' + e.message);
+      }
+    }
     </script>"""
 
     body = (
@@ -467,7 +531,13 @@ def index():
         '<div class="stat"><div class="n" style="color:var(--blue)">' + str(total_nodes) + '</div><div class="l">TOTAL NODES</div></div>'
         '</div>'
         '<div class="card"><div class="card-head"><span class="card-title">Missions</span>'
-        '<a href="/mission/new" class="btn btn-g">+ New Mission</a></div>' +
+        '<div style="display:flex;align-items:center;gap:10px">'
+        '<span id="import-status" style="font-size:.82em;color:var(--text2)"></span>'
+        '<input type="file" id="import-input" accept=".yml,.yaml" style="display:none" onchange="importMission()">'
+        '<button class="btn btn-s" onclick="document.getElementById(\'import-input\').click()" '
+        'title="Import a redinfra mission YAML file">⬆ Import</button>'
+        '<a href="/mission/new" class="btn btn-g">+ New Mission</a>'
+        '</div></div>' +
         rows +
         '</div>'
         '<div class="card" style="font-size:.8em;color:var(--text2);line-height:1.7">'
@@ -1644,6 +1714,68 @@ def api_mission_save():
 
         save_mission(data)
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route("/api/mission/export/<name>")
+def api_mission_export(name):
+    """Download a mission as its raw redinfra YAML file, byte for byte."""
+    for f in sorted(glob.glob(os.path.join(CONFIG_PATH, "*.yml"))):
+        if os.path.basename(f) in ("main.yml", "aws.yml"): continue
+        try:
+            with open(f) as fh:
+                cfg = yaml.safe_load(fh) or {}
+        except Exception:
+            continue
+        if cfg.get("mission") == name:
+            with open(f, "rb") as fh:
+                raw = fh.read()
+            dl_name = os.path.basename(f).replace('"', "")
+            return Response(raw, mimetype="application/x-yaml", headers={
+                "Content-Disposition": 'attachment; filename="%s"' % dl_name,
+            })
+    return jsonify({"ok": False, "error": "Mission not found"}), 404
+
+@app.route("/api/mission/import", methods=["POST"])
+def api_mission_import():
+    """Import a redinfra mission YAML file into the config directory."""
+    try:
+        up = request.files.get("file")
+        if not up or not up.filename:
+            return jsonify({"ok": False, "error": "No file provided"})
+        try:
+            cfg = yaml.safe_load(up.read().decode("utf-8"))
+        except UnicodeDecodeError:
+            return jsonify({"ok": False, "error": "Not a text file — expected YAML"})
+        except yaml.YAMLError as e:
+            return jsonify({"ok": False, "error": "Invalid YAML: %s" % str(e).replace("\n", " ")})
+        if not isinstance(cfg, dict):
+            return jsonify({"ok": False, "error": "Not a mission file — the top level must be a YAML mapping"})
+
+        # Drop UI-internal keys in case the file came from a hand-edited export
+        for k in [k for k in cfg if str(k).startswith("_")]:
+            cfg.pop(k)
+
+        # The "mission" key names the mission; fall back to the file name without it
+        name = str(cfg.get("mission") or "").strip()
+        if not name:
+            name = os.path.splitext(os.path.basename(up.filename))[0]
+        # Keep the standard redinfra key order: mission, enabled, then the nodes
+        cfg.pop("mission", None)
+        enabled = cfg.pop("enabled", False)
+        cfg = dict([("mission", name), ("enabled", enabled)] + list(cfg.items()))
+
+        path = mission_filename(name)  # raises on a name that could escape CONFIG_PATH
+        if os.path.exists(path) and request.form.get("overwrite") != "true":
+            return jsonify({"ok": False, "exists": True, "mission": name,
+                            "error": "Mission '%s' already exists" % name})
+        save_mission(cfg)
+        nodes = [k for k, v in cfg.items()
+                 if isinstance(v, dict) and ("region" in v or "instance_type" in v or "local_ip" in v)
+                 and k not in ("api", "routing", "tags")]
+        return jsonify({"ok": True, "mission": name, "nodes": len(nodes)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 
